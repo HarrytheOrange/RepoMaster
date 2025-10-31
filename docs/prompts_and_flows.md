@@ -20,6 +20,16 @@ This document summarizes all prompts defined in the repository and explains how 
 - Special instructions for Kaggle-like training tasks: `TRAIN_PROMPT` appended as additional instructions.
 - Termination: content ends with `TERMINATE` or `<TERMINATE>`; token-limit guard can also stop.
 
+- 中文说明：
+  - 参与 Agent：
+    - Code_Explorer（助理）：由 `SYSTEM_EXPLORER_PROMPT` 驱动。
+    - Coder_Excuter（用户代理/执行器）：负责执行代码/查看操作，并将结果返回。
+  - 入口消息：
+    - 仓库分析：`USER_EXPLORER_PROMPT`（任务 + 工作目录 + 仓库路径 + 重要模块摘要）。
+    - 通用编码：`CODE_ASSISTANT_PROMPT`（任务 + 工作目录）。
+  - Kaggle 类训练任务：将 `TRAIN_PROMPT` 作为附加说明拼接在系统提示后。
+  - 结束条件：内容以 `TERMINATE` 或 `<TERMINATE>` 结尾；也可能受令牌上限保护而停止。
+
 ### Deep Search Flow
 - Agents:
   - researcher (assistant): `DEEP_SEARCH_SYSTEM_PROMPT` (planning, horizontal-first browsing, iterative reflection, misalignment checks, finish with <TERMINATE>).
@@ -27,6 +37,14 @@ This document summarizes all prompts defined in the repository and explains how 
 - Auxiliary prompts:
   - `DEEP_SEARCH_CONTEXT_SUMMARY_PROMPT`: compress tool responses into essential facts.
   - `DEEP_SEARCH_RESULT_REPORT_PROMPT`: generate final comprehensive answer.
+
+- 中文说明：
+  - 参与 Agent：
+    - researcher（研究员，助理）：`DEEP_SEARCH_SYSTEM_PROMPT`（规划、先横后纵浏览、迭代反思、错位校验，最终以 `<TERMINATE>` 结束）。
+    - executor（执行者，用户代理）：`EXECUTOR_SYSTEM_PROMPT`（按研究员要求检索/浏览；仅当研究员宣布完成时终止）。
+  - 辅助提示：
+    - `DEEP_SEARCH_CONTEXT_SUMMARY_PROMPT`：将工具返回压缩为要点。
+    - `DEEP_SEARCH_RESULT_REPORT_PROMPT`：生成最终综合回答。
 
 ### Agent Scheduler Flow (Enhanced RepoMaster)
 - Agents:
@@ -39,11 +57,28 @@ This document summarizes all prompts defined in the repository and explains how 
 - Repo searching strategy: first search repos, then run the best, evaluate, iterate.
 - Termination: respond with `TERMINATE` when done.
 
+- 中文说明：
+  - 参与 Agent：
+    - scheduler_agent（调度）：`scheduler_system_message`（模式选择与工具编排）。
+    - user_proxy（执行代理）：`user_proxy_system_message`（仅返回工具输出，不直接面向用户）。
+  - 模式：
+    - Web 搜索模式 → 触发深度搜索代理。
+    - 仓库模式 → 调用 `run_repository_agent`（可能进一步调用 Code Explorer）。
+    - 通用编码模式 → 调用 `run_general_code_assistant`（General Coder）。
+  - 仓库检索策略：先搜仓库，再运行最优候选，评估后迭代。
+  - 结束条件：完成后输出 `TERMINATE`。
+
 ### General Coder Flow
 - Agents:
   - General_Coder (assistant): `Coder_Prompt` (or Update variants) as system prompt.
   - Coder_Excute (user-proxy): executes generated code; summarizes created files if needed.
 - Behavior: step-by-step, install dependencies, full executable scripts, error handling, retry with fixes, finish with `TERMINATE`.
+
+- 中文说明：
+  - 参与 Agent：
+    - General_Coder（助理）：以 `Coder_Prompt`（或 Update 变体）作为系统提示。
+    - Coder_Excute（用户代理）：执行生成的代码；必要时汇总创建的文件。
+  - 行为规范：分步执行、安装依赖、输出完整可运行脚本、错误处理与重试修复、完成后以 `TERMINATE` 结束。
 
 ### Code Block Judge Pipeline
 - Purpose: when assistant outputs multiple code blocks, use LLM to decide executability, intent, target file, deduplicate, and order.
@@ -51,10 +86,21 @@ This document summarizes all prompts defined in the repository and explains how 
   - `_build_system_prompt` and `_build_user_prompt` in codeblock judge.
 - Used by: extended user proxy code execution path to filter/sort blocks before execution.
 
+- 中文说明：
+  - 目的：当回复包含多个代码块时，使用 LLM 判定可执行性、意图、目标文件，去重并排序。
+  - 提示：
+    - `_build_system_prompt` 与 `_build_user_prompt` 位于代码块判定模块。
+  - 使用位置：扩展的用户代理执行路径在执行前对代码块进行筛选与排序。
+
 ### Web Search Micro‑Prompts
 - `SYSTEM_MESSAGE_HAS_SUFFICIENT_INFO`: decide if search results suffice (Yes/No only).
 - `SYSTEM_MESSAGE_GENERATE_ANSWER`: produce final answer based on provided results.
 - `SYSTEM_MESSAGE_IMPROVE_QUERY`: Think-on-Graph method to improve a query; output only the improved query.
+
+- 中文说明：
+  - `SYSTEM_MESSAGE_HAS_SUFFICIENT_INFO`：判断检索结果是否足够（仅回答 Yes/No）。
+  - `SYSTEM_MESSAGE_GENERATE_ANSWER`：基于结果直接生成最终回答。
+  - `SYSTEM_MESSAGE_IMPROVE_QUERY`：使用 ToG 方法改写并输出仅包含改进后的查询。
 
 ## Prompt Inventory by File
 
