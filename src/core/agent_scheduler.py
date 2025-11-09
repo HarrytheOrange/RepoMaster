@@ -31,10 +31,17 @@ Mode Selection Strategy:
   * User wants to find existing solutions, mentions GitHub, or needs specialized tools/libraries
   * User provides specific repository URLs or paths
 - **General Code Assistant Mode**: Used for general programming questions, requests for code examples, debugging help, or when no specific repository is mentioned.
+- **Preference**: When the desired outcome is a tool, prefer adapting an existing repository into a minimal tool interface (runner.py + mcp_server.py) over writing code from scratch; write from scratch only if no suitable repository exists.
+
+Browsing / Web‑Search Restriction:
+- Default behavior is repository‑first. Do NOT call generic web browsing/search tools unless the user explicitly requests web research or the task inherently requires up‑to‑date web information.
+- For repository tasks, prefer: github_repo_search → run_repository_agent. Avoid browsing.
+- Only use registered tools; never invent tool names. Valid tool names here are: github_repo_search, run_repository_agent, run_general_code_assistant, web_search.
 
 Working Process:
 1.  **Task Analysis and Initial Assessment**:
     *   Upon receiving user input, thoroughly analyze the requirements.
+    *   Intent interpretation: if the user says "I want to do X", treat it as "I want a reusable tool to do X" (tool-first framing).
     *   **Step 1 - Web Search Assessment**: Determine if the task requires real-time data, latest information, current events, or external knowledge that would benefit from web search. If yes, execute web search first.
     *   **Step 2 - Plan Creation**: Create a structured plan. For tasks potentially solvable by Repository Mode, this plan must prioritize a two-step approach:
         1.  Search for relevant GitHub repositories using available tools.
@@ -65,6 +72,16 @@ Important Notes:
 3.  If a tool is successfully called, answer based on the tool's results and your overall task plan.
 4.  If no available tool can solve the task, generate an answer based on your own knowledge.
 5.  When the task is completed successfully, reply ONLY with "TERMINATE".
+
+Final Reporting Guidelines:
+- If the execution produced runnable artifacts and an MCP wrapper under the working directory (e.g., runner.py and mcp_server.py), structure your final user-facing report to foreground the MCP service:
+  1) Clearly list artifact locations (absolute paths) for runner.py and mcp_server.py
+  2) Confirm mcp_server.py is import-based on runner.py (no duplicated logic)
+  3) Show how to start the MCP server (python mcp_server.py or equivalent)
+  4) Name of the tool to call: run_repo_task, with minimal input arguments description
+  5) Provide a minimal example client invocation and expected JSON outputs (absolute paths)
+  6) Confirm that both runner.py and mcp_server.py passed a quick smoke test; include a one‑line result summary
+  7) Optionally, show fallback direct execution via: python runner.py <args>
 
 Turn-taking and De-duplication Policy:
 - Before sending any message, compare it with the previous two messages. If your response would substantially repeat previously stated content (facts, sentences, or structure), do not restate it. If the task has already been fully answered, reply with exactly "TERMINATE" instead.
@@ -388,7 +405,66 @@ Please provide comprehensive help including code examples, explanations, and pra
                 'summary_prompt': "Summarize takeaway from the conversation and generate a complete and detailed report at last. Do not add any introductory phrases. The final answer should correspond to the user's question."
             }
         )
-        final_answer = self._extract_final_answer(chat_result)  
+        final_answer = self._extract_final_answer(chat_result)
+        
+        # Aggregate token usage from log and append a brief summary
+        try:
+            import os, json
+            log_path = os.path.join(self.work_dir, "token_usage.log")
+            if os.path.exists(log_path):
+                totals = {}
+                with open(log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            rec = json.loads(line.strip())
+                            model = rec.get("model") or "unknown"
+                            u = rec.get("usage") or {}
+                            pt = int((u.get("prompt_tokens") or 0) or 0)
+                            ct = int((u.get("completion_tokens") or 0) or 0)
+                            tt = int((u.get("total_tokens") or (pt + ct)) or 0)
+                            if model not in totals:
+                                totals[model] = {"prompt": 0, "completion": 0, "total": 0}
+                            totals[model]["prompt"] += pt
+                            totals[model]["completion"] += ct
+                            totals[model]["total"] += tt
+                        except Exception:
+                            continue
+
+                lines = []
+                # Load per-model prices if available in oai_config
+                price_map = {}
+                try:
+                    from configs.oai_config import get_api_config
+                    api = get_api_config()
+                    for provider in api.values():
+                        for cfg in provider.get("config_list", []):
+                            m = cfg.get("model")
+                            price = cfg.get("price")
+                            if m and isinstance(price, list) and len(price) == 2:
+                                price_map[m] = (float(price[0]), float(price[1]))
+                except Exception:
+                    pass
+
+                total_cost = 0.0
+                any_cost = False
+                for m, d in totals.items():
+                    cost = None
+                    if m in price_map:
+                        pp1k, cp1k = price_map[m]
+                        cost = (d["prompt"]/1000.0)*pp1k + (d["completion"]/1000.0)*cp1k
+                        total_cost += cost
+                        any_cost = True
+                    cost_part = f", cost≈{cost:.4f}" if cost is not None else ""
+                    lines.append(f"- {m}: prompt={d['prompt']}, completion={d['completion']}, total={d['total']}{cost_part}")
+
+                if lines:
+                    if any_cost:
+                        lines.append(f"Estimated total cost≈{total_cost:.4f}")
+                    footer = "\n\n---\nUsage summary:\n" + "\n".join(lines)
+                    final_answer = f"{final_answer}{footer}"
+        except Exception:
+            pass
+        
         return final_answer
 
     def _extract_final_answer(self, chat_result) -> str:

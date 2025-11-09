@@ -8,6 +8,7 @@ import autogen
 import asyncio
 import warnings
 import traceback
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Annotated, Literal
@@ -85,6 +86,42 @@ class BasicConversableAgent(ConversableAgent):
             cache=cache,
             agent=self,
         )
+        # Persist token usage to a log file for later aggregation
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None and hasattr(response, "to_dict"):
+                usage = response.to_dict().get("usage")
+            model = getattr(response, "model", None)
+            if model is None and hasattr(response, "to_dict"):
+                model = response.to_dict().get("model")
+
+            if usage:
+                # Prefer the agent's working directory; fallback to ./logs
+                log_dir = None
+                if hasattr(self, "work_dir") and getattr(self, "work_dir", None):
+                    log_dir = self.work_dir
+                else:
+                    log_dir = os.path.join(os.getcwd(), "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "token_usage.log")
+
+                def _get(val, key):
+                    return getattr(val, key, None) if not isinstance(val, dict) else val.get(key)
+
+                entry = {
+                    "ts": datetime.now().isoformat(),
+                    "agent": getattr(self, "name", ""),
+                    "model": model,
+                    "usage": {
+                        "prompt_tokens": _get(usage, "prompt_tokens"),
+                        "completion_tokens": _get(usage, "completion_tokens"),
+                        "total_tokens": _get(usage, "total_tokens"),
+                    },
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         extracted_response = llm_client.extract_text_or_completion_object(response)[0]
 
         if extracted_response is None:

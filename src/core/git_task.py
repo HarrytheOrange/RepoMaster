@@ -1,4 +1,5 @@
 import os   
+import sys
 import uuid
 import random
 import json
@@ -305,6 +306,17 @@ class AgentRunner:
             # answer = explorer.code_analysis(task, max_turns=30)
             print("==== code analysis done", answer)
             time.sleep(10)
+
+            # After successful execution, synthesize minimal runner and MCP wrapper using the same explorer session
+            try:
+                AgentRunner._post_generate_mcp(explorer, target_output_path, target_repo_path)
+            except Exception as _gen_e:
+                print(f"[WARN] MCP/runner generation step failed: {_gen_e}")
+            # Run deterministic smoke tests using env-triggered self-tests
+            try:
+                AgentRunner._smoke_test_mcp(target_output_path)
+            except Exception as _test_e:
+                print(f"[WARN] MCP/runner smoke test step failed: {_test_e}")
             
             # Check if retry is needed
             if not os.path.exists(target_output_path) and retry_times > 0:
@@ -321,6 +333,76 @@ class AgentRunner:
             print(f"=== Task {task_id} submission failed: {e}")
             print(traceback.format_exc())
             raise e
+
+    @staticmethod
+    def _post_generate_mcp(explorer, target_output_path, target_repo_path):
+        """Use the existing CodeExplorer session to generate runner.py and a minimal MCP server.
+        The artifacts are written into target_output_path so downstream tools can discover them easily.
+        """
+        import textwrap
+        import asyncio
+        prompt = textwrap.dedent(f"""
+        You have just finished analyzing and running the repository successfully.
+        Context:
+        - repo_path: {target_repo_path}
+        - output_dir: {target_output_path}
+
+        Now, reusing your current understanding, create TWO files under output_dir using executable code blocks with a filename header (do NOT use FileEditTool.edit to create new files):
+
+        1) runner.py (a minimal executable entry script):
+           - Prefer importing and calling repository functions directly; if not feasible, fallback to subprocess invoking the exact validated command sequence.
+           - Avoid argparse unless absolutely necessary; prefer simple sys.argv or environment variables for minimal inputs.
+           - Must include main() and the standard guard: if __name__ == "__main__": main().
+           - Accept only the minimal required inputs to reproduce the task and write all outputs to output_dir.
+           - Print the absolute output file paths at the end (JSON or newline-separated) so other tools can pick them up.
+           - Implement a self-test path: when environment variable RUNNER_SELF_TEST=1 is set, run a smallest feasible test and exit(0) on success; print any produced outputs' absolute paths.
+           - IMPORTANT: Use an executable code block that starts with: `# filename: runner.py` so the system saves it to output_dir automatically.
+
+        2) mcp_server.py (a lightweight MCP server exposing one tool named 'run_repo_task'):
+           - This file MUST import runner.py and call its functionality directly (do NOT duplicate task logic).
+             Only if import fails after one attempt, fallback to invoking runner.py via subprocess.
+           - If importing 'mcp' fails, install it into the current virtual environment, then import it.
+           - Expose a single tool 'run_repo_task' that accepts the same minimal inputs as runner.py and returns a concise JSON string like:
+             {{"outputs": ["/abs/path/to/output.ext", ...]}}.
+           - Provide a brief usage note at the top describing how to start the MCP server and an example client invocation.
+           - Implement a self-test path: when environment variable MCP_SELF_TEST=1 is set, internally perform one minimal invocation of run_repo_task and exit(0) on success; print the returned JSON.
+           - IMPORTANT: Use an executable code block that starts with: `# filename: mcp_server.py` so the system saves it to output_dir automatically.
+
+        Validation step:
+           - Test runner.py: either set RUNNER_SELF_TEST=1 and execute, or perform the smallest feasible run to ensure it executes end-to-end without interactive input.
+           - Test mcp_server.py: either set MCP_SELF_TEST=1 and execute, or import the module and directly invoke the function behind 'run_repo_task'. Capture and show the returned JSON including absolute output paths.
+           - Finally, list absolute paths that now exist:
+             - {target_output_path}/runner.py
+             - {target_output_path}/mcp_server.py
+
+        Keep the code concise and robust, and keep dependencies minimal.
+        """)
+        # Keep this follow-up concise to avoid long additional conversations
+        return asyncio.run(explorer.a_code_analysis(prompt, max_turns=8))
+    
+    @staticmethod
+    def _smoke_test_mcp(target_output_path):
+        """Run a lightweight, non-interactive smoke test for runner.py and mcp_server.py if present.
+        Uses environment variable triggers required by the generation step.
+        """
+        try:
+            runner_path = os.path.join(target_output_path, 'runner.py')
+            if os.path.exists(runner_path):
+                env = os.environ.copy()
+                env['RUNNER_SELF_TEST'] = '1'
+                subprocess.run([sys.executable, runner_path], cwd=target_output_path, env=env, check=True, timeout=120)
+                print("[OK] runner.py self-test passed")
+        except Exception as e:
+            print(f"[WARN] runner.py self-test failed: {e}")
+        try:
+            server_path = os.path.join(target_output_path, 'mcp_server.py')
+            if os.path.exists(server_path):
+                env = os.environ.copy()
+                env['MCP_SELF_TEST'] = '1'
+                subprocess.run([sys.executable, server_path], cwd=target_output_path, env=env, check=True, timeout=120)
+                print("[OK] mcp_server.py self-test passed")
+        except Exception as e:
+            print(f"[WARN] mcp_server.py self-test failed: {e}")
     
     @staticmethod
     def process_single_task(task_info, args):

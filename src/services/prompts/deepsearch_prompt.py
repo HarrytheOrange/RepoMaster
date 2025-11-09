@@ -222,4 +222,12 @@ The answer should focus on solving the user's specific problem, providing action
 - If multiple steps or options are involved, list them clearly.
 - The ultimate goal is to provide the user with an answer that is easy to understand, well-informed, and directly applicable.
 - At the end of the answer, please clearly provide a **conclusion** to summarize, and list the main **citations/references** (if applicable).
+
+**If the overall agent pipeline produced runnable artifacts and an MCP wrapper (e.g., runner.py and mcp_server.py under the working directory), append a short "MCP Usage" section that includes:**
+1. Absolute paths of runner.py and mcp_server.py
+2. Explicitly state that mcp_server.py wraps runner.py via import (no duplicated logic)
+3. How to start the MCP server and the exposed tool name (run_repo_task)
+4. Minimal input arguments, one example client call, and expected JSON outputs (absolute paths)
+5. Confirm that a quick test has been performed for both runner.py and mcp_server.py and briefly summarize the result
+6. Optional: fallback direct execution via `python runner.py <args>`
 """

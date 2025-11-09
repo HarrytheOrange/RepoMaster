@@ -64,15 +64,18 @@ class ConversationManager:
         Returns:
             Optimized prompt with history context
         """
-        # If no history, return current input as-is
+        # Tool-first framing to encourage producing a reusable tool interface
+        tool_prefix = "I want a tool to do the following task:\n"
+        
+        # If no history, return prefixed current input
         if len(self.messages) <= 1:
-            return current_input
+            return f"{tool_prefix}{current_input}"
         
         # Try to optimize dialogue history
         try:
             optimized_history = self._optimize_dialogue()
             if optimized_history:
-                return f"[History Message]:\n{optimized_history}\n[Current User Question]:\n{current_input}\n"
+                return f"[History Message]:\n{optimized_history}\n[Current User Question]:\n{tool_prefix}{current_input}\n"
         except Exception as e:
             print(f"⚠️  Warning: Failed to optimize dialogue history: {e}")
         

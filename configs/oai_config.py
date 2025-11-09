@@ -11,6 +11,20 @@ DEFAULT_PROVIDER_PRIORITY = [
 ]
 
 def get_api_config():
+    # Build DeepSeek config with optional pricing for specific model variants
+    deepseek_model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v3")
+    deepseek_entry = {
+        "model": deepseek_model,
+        "api_key": os.environ.get("DEEPSEEK_API_KEY"),
+        "base_url": os.environ.get("DEEPSEEK_BASE_URL")
+    }
+    # If using deepseek-v3-1-terminus, add explicit pricing (CNY per 1k tokens)
+    # 4 CNY / 1M prompt tokens => 0.004 CNY / 1k; 12 CNY / 1M completion tokens => 0.012 CNY / 1k
+    if deepseek_model == "deepseek-v3-1-terminus":
+        prompt_price_per_1k = float(os.environ.get("DEEPSEEK_TERMINUS_PROMPT_PRICE_PER_1K", "0.004"))
+        completion_price_per_1k = float(os.environ.get("DEEPSEEK_TERMINUS_COMPLETION_PRICE_PER_1K", "0.012"))
+        deepseek_entry["price"] = [prompt_price_per_1k, completion_price_per_1k]
+
     return {
         'openai': {
             "config_list": [{
@@ -27,11 +41,7 @@ def get_api_config():
             }]
         },
         'deepseek': {
-            "config_list": [{
-                "model": os.environ.get("DEEPSEEK_MODEL", "deepseek-v3"),
-                "api_key": os.environ.get("DEEPSEEK_API_KEY"),
-                "base_url": os.environ.get("DEEPSEEK_BASE_URL")
-            }]
+            "config_list": [deepseek_entry]
         },
         'basic': {
             "config_list": [{

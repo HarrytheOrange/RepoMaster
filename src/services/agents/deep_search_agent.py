@@ -157,6 +157,7 @@ class AutogenDeepSearchAgent:
             [
                 self.agent_tool_library.searching,
                 self.agent_tool_library.browsing,
+                {"function": self.agent_tool_library.browsing, "name": "browsering"},
                 # self.agent_tool_library.create_code_tool,
             ],
             self.researcher,
@@ -261,6 +262,40 @@ class AutogenDeepSearchAgent:
         
         # Directly use client's create method without passing additional API parameters
         response = client.create(messages=messages_list)
+        # Persist token usage for this summarization call
+        try:
+            usage = getattr(response, "usage", None)
+            if usage is None and hasattr(response, "to_dict"):
+                usage = response.to_dict().get("usage")
+            model = getattr(response, "model", None)
+            if model is None and hasattr(response, "to_dict"):
+                model = response.to_dict().get("model")
+            if usage:
+                import os, json
+                from datetime import datetime
+                work_dir = None
+                if isinstance(self.code_execution_config, dict):
+                    work_dir = self.code_execution_config.get("work_dir")
+                log_dir = work_dir or os.path.join(os.getcwd(), "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "token_usage.log")
+
+                def _get(val, key):
+                    return getattr(val, key, None) if not isinstance(val, dict) else val.get(key)
+                entry = {
+                    "ts": datetime.now().isoformat(),
+                    "agent": "deepsearch_summary",
+                    "model": model,
+                    "usage": {
+                        "prompt_tokens": _get(usage, "prompt_tokens"),
+                        "completion_tokens": _get(usage, "completion_tokens"),
+                        "total_tokens": _get(usage, "total_tokens"),
+                    },
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
             
         summary = response.choices[0].message.content
         

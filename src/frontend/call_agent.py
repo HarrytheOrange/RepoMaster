@@ -36,9 +36,11 @@ class AgentCaller:
         return None
     
     def preprocess_message(self, prompt):
+        tool_prefix = "I want a tool to do the following task:\n"
         if len(st.session_state.messages) <= 1:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            return prompt
+            prefixed = f"{tool_prefix}{prompt}"
+            st.session_state.messages.append({"role": "user", "content": prefixed})
+            return prefixed
 
         try:
             optimize_history_message = self._optimize_dialogue(st.session_state.messages)
@@ -46,11 +48,11 @@ class AgentCaller:
             print(f"Error optimizing dialogue: {str(e)}")
             optimize_history_message = ''
         if optimize_history_message:
-            out_prompt = f"[History Message]:\n{optimize_history_message}\n[Current User Question]:\n{prompt}\n"
+            out_prompt = f"[History Message]:\n{optimize_history_message}\n[Current User Question]:\n{tool_prefix}{prompt}\n"
             st.session_state.messages = [{"role": "user", "content": out_prompt}]
             return out_prompt
         else:
-            return prompt
+            return f"{tool_prefix}{prompt}"
     
     def postprocess_message(self, ai_response):
         # Add AI response to chat history
