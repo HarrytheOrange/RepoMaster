@@ -286,6 +286,7 @@ class AutogenDeepSearchAgent:
                     "ts": datetime.now().isoformat(),
                     "agent": "deepsearch_summary",
                     "model": model,
+                    "tool": None,
                     "usage": {
                         "prompt_tokens": _get(usage, "prompt_tokens"),
                         "completion_tokens": _get(usage, "completion_tokens"),

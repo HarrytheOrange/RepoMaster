@@ -293,8 +293,8 @@ If the result indicates there is an error, fix the error and output the code aga
 
 ## !! Key Constraints and Mandatory Requirements !!
 
-- Error Reflection and Iteration: If code is modified, please reflect on the reasons for the modification, and regenerate code based on the modified code. After modification, output the complete code, not just the modified parts.
-    - **Remember: Do not output only the modified parts, output the complete code**
+- Error Reflection and Iteration: If code is modified, please reflect on the reasons for the modification, and regenerate only the minimal changes required. 
+    - **When modifying existing files, DO NOT output the entire file. Prefer using the File Edit Tool to apply precise replacements (old_string → new_string) with exact indentation preserved, or provide the smallest possible diff context needed.**
 - Absolute paths required: When processing files in code (such as reading/writing files, loading data, saving models, etc.), **must and only use absolute paths**, strictly prohibit any form of relative paths. Examples:
     * Correct: `/root/workspace/RepoMaster/data/file.csv`
     * Wrong: `./data/file.csv` or `data/file.csv` or `../data/file.csv`

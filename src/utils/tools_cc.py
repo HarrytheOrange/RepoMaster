@@ -29,9 +29,9 @@ class FileEditTool:
     ) -> Annotated[str, "Edit result information with file snippet or error message"]:
         """
         Performs exact string replacements in files.
-        
+
         Usage Rules:
-        - Must read file with Read tool before editing
+        - Must read the file before editing (e.g., using the `view_file_content` tool)
         - Preserve exact indentation as it appears in file
         - ALWAYS prefer editing existing files over creating new ones
         - Edit fails if old_string is not unique (unless replace_all=True)
