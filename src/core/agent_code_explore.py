@@ -18,7 +18,7 @@ from src.services.autogen_upgrade.base_agent import ExtendedUserProxyAgent, Exte
 from src.core.base_code_explorer import BaseCodeExplorer
 from src.services.agents.deep_search_agent import AutogenDeepSearchAgent
 from src.core.agent_docker_executor import EnhancedDockerCommandLineCodeExecutor
-from src.utils.tools_cc import FileEditTool
+from src.utils.tools_cc import FileEditTool, WriteFileTool
 from configs.oai_config import get_llm_config
 
 class CodeExplorer(BaseCodeExplorer):
@@ -246,6 +246,7 @@ If no relevant solutions are found, please indicate that.
                 self.code_library.find_dependencies,
                 self.code_library.view_file_content,
                 self.issue_solution_search,
+                WriteFileTool.write,
                 FileEditTool.edit,
                 # self.code_library.view_reference_relationships,
                 # self.code_library.get_module_dependencies,

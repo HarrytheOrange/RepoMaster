@@ -92,7 +92,7 @@ class FileReader:
             return f"Error reading file: {str(e)}"
 
 class FileEditor:
-    """File editing tool that performs exact string replacements"""
+    """File editing tool that performs exact string replacements (no creation)"""
     
     @staticmethod
     def edit(
@@ -102,9 +102,11 @@ class FileEditor:
         replace_all: Annotated[bool, "Replace all occurrences of old_string (default false)"] = False
     ) -> Annotated[str, "Edit result information with file snippet or error message"]:
         """
-        Performs exact string replacements in files.
+        Performs exact string replacements in existing files (no creation).
         
         Usage Rules:
+        - This tool only edits existing files. It will NOT create files.
+        - Use WriteFile tool for first-time file creation.
         - You must use your Read tool at least once in the conversation before editing. 
           This tool will error if you attempt an edit without reading the file.
         - When editing text from Read tool output, ensure you preserve the exact indentation 
@@ -112,8 +114,7 @@ class FileEditor:
           format is: spaces + line number + tab. Everything after that tab is the actual 
           file content to match. Never include any part of the line number prefix in the 
           old_string or new_string.
-        - ALWAYS prefer editing existing files in the codebase. NEVER write new files 
-          unless explicitly required.
+        - ALWAYS prefer editing existing files in the codebase.
         - Only use emojis if the user explicitly requests it. Avoid adding emojis to 
           files unless asked.
         - The edit will FAIL if old_string is not unique in the file. Either provide a 
@@ -123,6 +124,10 @@ class FileEditor:
           is useful if you want to rename a variable for instance.
         """
         try:
+            # Must exist; otherwise return error
+            if not os.path.exists(file_path):
+                return f"Error: File not found: {file_path}. Use WriteFile tool to create files first."
+
             # Read file content
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()

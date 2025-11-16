@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Annotated, Literal
+import time
 from autogen import AssistantAgent, UserProxyAgent, ConversableAgent
 from src.core.code_utils import filter_pip_output, cut_execute_result_by_token, cut_logs_by_token
 from src.utils.pip_install_error.judge_pip_error import judge_pip_package
@@ -18,6 +19,7 @@ from src.services.autogen_upgrade.autogen_fix_execution import filter_duplicate_
 from src.services.autogen_upgrade.file_monitor import get_directory_files, compare_and_display_new_files
 from autogen import Agent
 from autogen.agentchat.conversable_agent import logger
+from src.utils.audit_logger import log_event, Stopwatch
 
 
 from autogen.formatting_utils import colored
@@ -53,6 +55,7 @@ def check_code_block(content):
         for lang, code in matches:
             lang = lang.lower().strip()
             # If language is empty or shell command related, skip
+            # Not skiped shell command?
             if lang in common_languages:
                 code_blocks.append({"language": lang, "code": code.strip()})
             else:
@@ -79,6 +82,7 @@ class BasicConversableAgent(ConversableAgent):
                 all_messages.append(message)
 
         # TODO: #1143 handle token limit exceeded error
+        sw = Stopwatch()
         response = llm_client.create(
             context=messages[-1].pop("context", None),
             messages=all_messages,
@@ -86,6 +90,7 @@ class BasicConversableAgent(ConversableAgent):
             agent=self,
         )
         extracted_response = llm_client.extract_text_or_completion_object(response)[0]
+        duration_s = sw.elapsed()
 
         if extracted_response is None:
             warnings.warn(f"Extracted_response from {response} is None.", UserWarning)
@@ -157,17 +162,43 @@ class BasicConversableAgent(ConversableAgent):
                 }
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            
+            # Emit structured audit record for this LLM interaction
+            try:
+                # Extract compact response preview
+                response_preview = extracted_response
+                if isinstance(extracted_response, dict):
+                    response_preview = extracted_response.get("content") or json.dumps(extracted_response)
+                tool_calls_list = []
+                if isinstance(extracted_response, dict):
+                    if extracted_response.get("tool_calls"):
+                        for tc in extracted_response.get("tool_calls") or []:
+                            fn = (tc.get("function") or {}).get("name")
+                            if fn:
+                                tool_calls_list.append(fn)
+                    elif extracted_response.get("function_call"):
+                        fn = (extracted_response.get("function_call") or {}).get("name")
+                        if fn:
+                            tool_calls_list.append(fn)
+                log_event(
+                    "llm_interaction",
+                    payload={
+                        "agent": getattr(self, "name", ""),
+                        "model": model,
+                        "duration_s": duration_s,
+                        "messages": all_messages,
+                        "response": response_preview if isinstance(response_preview, str) else json.dumps(response_preview, ensure_ascii=False),
+                        "tool_calls": tool_calls_list,
+                        "usage": entry.get("usage") if usage else None,
+                    },
+                    work_dir=getattr(self, "work_dir", None),
+                )
+            except Exception:
+                pass
         except Exception:
             pass
                     
-        # Check if both code blocks and tool calls exist simultaneously
-        if isinstance(extracted_response, dict) and extracted_response.get('content') and (
-            check_code_block(extracted_response['content']) is not None
-        ) and (
-            extracted_response.get("tool_calls", "") or extracted_response.get("function_call", "")
-        ):
-            extracted_response.pop("tool_calls", None)
-            extracted_response.pop("function_call", None)
+        # Do not suppress tool calls when code blocks appear; keep tool_calls/function_call intact
             
         return extracted_response
 
@@ -274,10 +305,38 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
         "function_call" deprecated as of [OpenAI API v1.1.0](https://github.com/openai/openai-python/releases/tag/v1.1.0)
         See https://platform.openai.com/docs/api-reference/chat/create#chat-create-function_call
         """
+        sw = Stopwatch()
         execute_result = await super().a_execute_function(func_call, call_id, verbose)
         is_exec_success, result_dict = execute_result
         if isinstance(result_dict, dict) and 'content' in result_dict and isinstance(result_dict['content'], str):
             result_dict['content'] = cut_logs_by_token(result_dict['content'], max_token=8000)
+        try:
+            # Structured audit for tool execution
+            tool_name = (func_call or {}).get("name")
+            args_raw = (func_call or {}).get("arguments")
+            if isinstance(args_raw, (dict, list)):
+                try:
+                    args_raw = json.dumps(args_raw, ensure_ascii=False)
+                except Exception:
+                    args_raw = str(args_raw)
+            result_preview = ""
+            if isinstance(result_dict, dict):
+                result_preview = (result_dict.get("content") or "")[:2000]
+            log_event(
+                "tool_usage",
+                payload={
+                    "agent": getattr(self, "name", ""),
+                    "tool_name": tool_name,
+                    "arguments": args_raw,
+                    "success": bool(is_exec_success),
+                    "duration_s": sw.elapsed(),
+                    "call_id": call_id,
+                    "result_preview": result_preview,
+                },
+                work_dir=getattr(self, "work_dir", None),
+            )
+        except Exception:
+            pass
         return is_exec_success, result_dict
 
     async def _a_execute_tool_call(self, tool_call):
@@ -476,6 +535,17 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
             code_blocks = process_and_filter_code_blocks(code_blocks)
             if len(code_blocks) == 0:
                 continue
+            
+            # Enforce execution policy: Python blocks are saved only; only shell commands are executed
+            try:
+                exec_policies = getattr(self._code_executor, "execution_policies", None)
+                if isinstance(exec_policies, dict):
+                    for _py in ("python", "python3"):
+                        exec_policies[_py] = False
+                    for _sh in ("sh", "bash", "shell"):
+                        exec_policies[_sh] = True
+            except Exception:
+                pass
  
             num_code_blocks = len(code_blocks)
             if num_code_blocks == 1:
@@ -494,7 +564,34 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
                     ),
                     flush=True,
                 )
- 
+            # Log code execution metadata to token_usage.log (without code content)
+            try:
+                log_dir = None
+                if hasattr(self, "work_dir") and getattr(self, "work_dir", None):
+                    log_dir = self.work_dir
+                else:
+                    log_dir = os.path.join(os.getcwd(), "logs")
+                os.makedirs(log_dir, exist_ok=True)
+                log_path = os.path.join(log_dir, "token_usage.log")
+                languages = [getattr(cb, "language", None) for cb in code_blocks]
+                entry = {
+                    "ts": datetime.now().isoformat(),
+                    "agent": getattr(self, "name", ""),
+                    "model": "code-exec",
+                    "tool": (languages[0] if len(languages) == 1 else ",".join([str(l) for l in languages])),
+                    "languages": languages,
+                    "num_code_blocks": num_code_blocks,
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            
             # found code blocks, execute code.
             code_result = self._code_executor.execute_code_blocks(code_blocks)
             exitcode2str = "execution succeeded" if code_result.exit_code == 0 else "execution failed"

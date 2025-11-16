@@ -12,6 +12,7 @@ from enum import Enum
 import base64
 import requests
 from urllib.parse import quote_plus
+from src.utils.audit_logger import log_event
 
 # ============================================================================
 # Base Classes and Types
@@ -71,6 +72,20 @@ class FileEditTool:
             
             # Generate snippet around the modification
             lines = new_content.split('\n')
+            # Structured audit log for edit
+            try:
+                log_event(
+                    "tool_file_edit",
+                    payload={
+                        "tool_name": "FileEditTool.edit",
+                        "file_path": file_path,
+                        "replacements_made": replacements_made,
+                        "replace_all": bool(replace_all),
+                        "total_lines_after": len(lines),
+                    },
+                )
+            except Exception:
+                pass
             for i, line in enumerate(lines):
                 if new_string in line:
                     start = max(0, i - 3)
@@ -86,7 +101,59 @@ class FileEditTool:
                     return result
             
             replacement_info = f" ({replacements_made} replacement{'s' if replacements_made > 1 else ''} made)" if replace_all else ""
+            print(f"The file {file_path} has been updated successfully{replacement_info}.")
             return f"The file {file_path} has been updated successfully{replacement_info}."
             
         except Exception as e:
             return f"Error editing file: {str(e)}"
+
+class WriteFileTool:
+    """File creation tool for writing full content to a new or existing file"""
+    
+    @staticmethod
+    def write(
+        file_path: Annotated[str, "Absolute path to the file to create/write"],
+        content: Annotated[str, "Full file content to write (UTF-8)"],
+        overwrite: Annotated[bool, "Overwrite if file exists (default false)"] = False
+    ) -> Annotated[str, "Write result information or error message"]:
+        """
+        Create a new file (or overwrite if allowed) with the provided content.
+        
+        Usage Rules:
+        - Prefer this tool for first-time file creation
+        - If the file already exists and overwrite is False, the write will fail
+        - For incremental changes to existing files, use the Edit tool instead
+        """
+        try:
+            # Ensure parent directory exists
+            parent_dir = os.path.dirname(file_path)
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
+            
+            if os.path.exists(file_path) and not overwrite:
+                return f"Error: File already exists: {file_path}. Use Edit tool or set overwrite=True."
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            # Return brief confirmation (avoid dumping full content)
+            lines = content.split('\n')
+            # Structured audit log for write
+            try:
+                log_event(
+                    "tool_file_write",
+                    payload={
+                        "tool_name": "WriteFileTool.write",
+                        "file_path": file_path,
+                        "lines_written": len(lines),
+                        "overwrite": bool(overwrite),
+                    },
+                )
+            except Exception:
+                pass
+            preview = '\n'.join(lines[:10])
+            suffix = "" if len(lines) <= 10 else f"\n... (total {len(lines)} lines)"
+            return f"File written: {file_path}\nPreview:\n{preview}{suffix}"
+        
+        except Exception as e:
+            return f"Error writing file: {str(e)}"

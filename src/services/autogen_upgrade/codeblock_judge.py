@@ -13,17 +13,19 @@ def _build_system_prompt() -> str:
         "1) Judge whether each code block is runnable and whether the language label matches the code (language_ok)\n"
         "2) Identify code block intent:\n"
         "   - env_setup: System dependencies/environment preparation (such as apt-get, pip install, etc.)\n"
-        "   - direct_exec: Code to be executed directly (contains specific logic, will be executed directly by autogen)\n" 
+        "   - direct_exec: Code to be executed directly (contains specific logic). NOTE: Python code blocks are saved via tools (e.g., WriteFileTool.write) and are not executed directly; only shell commands are executed.\n" 
         "   - script_run: Run script commands (such as python xxx.py)\n"
         "   - other: Other types\n"
         "3) Extract target file target_file:\n"
-        "   - If Python code contains '# filename: xxx.py', then target_file=that filename\n"
         "   - If Shell code is like 'python xxx.py' or 'python3 xxx.py', then target_file=xxx.py\n"
-        "4) Deduplication rules: If one code block is directly executable code (contains filename comment), another code block runs the same script, then keep the directly executable code and discard the run command\n"
-        "   - Keep only one run command for the same script\n"
-        "   - Keep only one code block with identical content\n"
+        "   - For Python code blocks without explicit filenames, treat target_file as null (these will be saved using tools)\n"
+        "4) Deduplication rules:\n"
+        "   - When a Python block (to be saved) and a Shell block run the same logical script, keep BOTH: the Python block will be saved by tools, and the Shell run command will be executed.\n"
+        "   - Keep only one run command for the same script.\n"
+        "   - Keep only one Python block with identical content for the same script.\n"
         "5) Sorting rules: Intelligent sorting based on execution logic\n"
         "   - Environment preparation (env_setup) executes first\n"
+        "   - Save Python scripts (direct_exec) before running them with Shell (script_run)\n"
         "   - Reasonably arrange other code blocks order based on dependencies and execution logic\n"
         "   - Such as: data preparation → data processing → result output\n"
         "   - Such as: generate dependent files first\n"
@@ -38,24 +40,24 @@ def _build_system_prompt() -> str:
         '  "order": [0, 1]\n'
         "}\n"
         "\n"
-        "Example 1 - Intelligent reordering (environment preparation + direct execution):\n"
+        "Example 1 - Intelligent reordering (environment preparation + direct execution - Python saved via tool):\n"
         "Input: [\n"
-        '  {"index": 0, "language": "python", "code": "# filename: convert.py\\nimport os\\nfrom spatie.pdf_to_text import Pdf\\nprint(\\"converting\\")"},\n'
+        '  {"index": 0, "language": "python", "code": "import os\\nprint(\\"converting\\")"},\n'
         '  {"index": 1, "language": "sh", "code": "apt-get update && apt-get install -y poppler-utils"}\n'
         "]\n"
         "Output: {\n"
-        '  "blocks": [{"index": 1, "keep": true, "intent": "env_setup", "target_file": null}, {"index": 0, "keep": true, "intent": "direct_exec", "target_file": "convert.py"}],\n'
+        '  "blocks": [{"index": 1, "keep": true, "intent": "env_setup", "target_file": null}, {"index": 0, "keep": true, "intent": "direct_exec", "target_file": null}],\n'
         '  "order": [1, 0]\n'
         "}\n"
         "\n"
         "Example 2 - Direct execution + run script deduplication:\n"
         "Input: [\n"
-        '  {"index": 0, "language": "python", "code": "# filename: test.py\\nprint(\\"test\\")"},\n'
+        '  {"index": 0, "language": "python", "code": "print(\\"test\\")"},\n'
         '  {"index": 1, "language": "sh", "code": "python test.py"}\n'
         "]\n"
         "Output: {\n"
-        '  "blocks": [{"index": 0, "keep": true, "intent": "direct_exec", "target_file": "test.py"}, {"index": 1, "keep": false, "intent": "script_run", "target_file": "test.py"}],\n'
-        '  "order": [0]\n'
+        '  "blocks": [{"index": 0, "keep": true, "intent": "direct_exec", "target_file": "test.py"}, {"index": 1, "keep": true, "intent": "script_run", "target_file": "test.py"}],\n'
+        '  "order": [0, 1]\n'
         "}\n"
         "\n"
                 "Only output JSON, no other text."

@@ -222,7 +222,7 @@ In the following cases, suggest python code (in a python coding block) or shell 
 Important: When generating code, do not use any libraries or functions that require API keys or external authentication, as these cannot be provided. If the code execution fails due to missing API credentials, regenerate the code using a different approach that doesn't require API access.
 Browsing Restriction: Your primary goal is to solve tasks by analyzing and executing the provided repository. Do NOT perform generic web browsing/web search. Only when fixing a concrete runtime error and strictly necessary, you may call the issue_solution_search tool; otherwise, avoid any web search.
 
-If you want the user to save the code in a file before executing it, put # filename: <filename> inside the code block as the first line. Don't include multiple code blocks in one response. Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user. 
+When you need to save a Python script, use the WriteFileTool.write tool to write the file (use absolute paths). Do NOT insert '# filename: <filename>' inside Python code blocks. If execution is needed, provide a Shell code block that runs the saved script (e.g., `python /abs/path/script.py`). Do not ask users to copy and paste the result. Instead, use 'print' function for the output when relevant. Check the execution result returned by the user. 
 
 If the result indicates there is an error, fix the error and output the code again. Suggest the full code instead of partial code or code changes. If the error can't be fixed or if the task is not solved even after the code is executed successfully, analyze the problem, revisit your assumption, collect additional info you need, and think of a different approach to try. 
 
@@ -256,18 +256,14 @@ If the result indicates there is an error, fix the error and output the code aga
     * If libraries cannot be imported, please install the library first, if already installed, please ignore
         ** For example, ModuleNotFoundError: No module named 'wandb', can use pip install wandb
     * Conda environment is pre-configured, no need to create conda environment
-    * **Automatic Code Execution**: After adding `# filename: <filename>` on the first line of the code block, the system will automatically save the code to the specified file and execute it, without additional commands. For example:
-      ```python
-      # filename: process_data.py
-      import pandas as pd
-      
-      # Data processing code
-      # Note: Always use absolute paths
-      df = pd.read_csv('/root/workspace/RepoMaster/data/data.csv')  # Correct: Using absolute path
-      # df = pd.read_csv('./data.csv')  # Wrong: Using relative path
-      print(df.head())
-      ```
-      The above code will be automatically saved as `process_data.py` and executed, without manual copying or execution.
+    * Keep implementation simple: prefer the simplest workable solution. Avoid excessive logging and broad try/except blocks; add only minimal, necessary error handling around known failure points.
+    * **Code Saving and Execution Policy**: Use the WriteFileTool.write tool to save Python scripts to files (absolute paths). Do NOT use '# filename:' headers in Python code blocks. Python code blocks are for illustration only and are not executed. To execute, provide a Shell code block that runs the saved script, for example:
+      - Save file via tool:
+        WriteFileTool.write(file_path='/root/workspace/RepoMaster/process_data.py', content='<FULL PYTHON CODE HERE>', overwrite=True)
+      - Then run via Shell:
+        ```sh
+        python /root/workspace/RepoMaster/process_data.py
+        ```
     * After generating code, no need to use view_file_content to check, execute the code directly.
     * If checkpoint model files are required, first check if they exist. If they exist, use them directly; otherwise, download checkpoint files first, then use (automatic download required)
         * For example, if you need to download checkpoint files, use the `wget` command. If multiple files need to be downloaded, use the `wget -O` command.
@@ -288,11 +284,17 @@ If the result indicates there is an error, fix the error and output the code aga
     *   After successful code execution, you need to verify whether the task has been completed. It's best to write a validation script to verify task completion.
     *   Due to task complexity, multiple scripts may be needed to complete jointly. You may have only completed part of it, or the completed result may not meet task requirements, so you must verify whether the task is completed.
     *   Need to judge whether results meet task requirements. If there are fixed output formats or file names and addresses, please help rename files or copy result files to specified addresses.
-8.  **Task Completion**: 
+8.  **MCP Server**:
+    *   After validate the main code, you need to create a MCP server (mcp_server.py) to expose the tools to the user. You also need to make sure this MCP Server can be correctly run.
+9.  **Task Completion**: 
     *   Need to determine whether all tasks have been executed (execution results required). If completed, provide a summary without code blocks and end the response with `<TERMINATE>` (only output when all tasks are executed and results are received and verified). 
 
 ## !! Key Constraints and Mandatory Requirements !!
 
+- Deliverables constraint (scoped):
+    - For environment setup/installation steps, save exactly one Python setup script via WriteFileTool.write (use absolute paths). Do NOT create additional setup Python files.
+    - For final testing/validation steps, save exactly one Python testing script via WriteFileTool.write (use absolute paths). Do NOT create additional testing Python files.
+    - Other parts are not restricted by this constraint.
 - Error Reflection and Iteration: If code is modified, please reflect on the reasons for the modification, and regenerate only the minimal changes required. 
     - **When modifying existing files, DO NOT output the entire file. Prefer using the File Edit Tool to apply precise replacements (old_string → new_string) with exact indentation preserved, or provide the smallest possible diff context needed.**
 - Absolute paths required: When processing files in code (such as reading/writing files, loading data, saving models, etc.), **must and only use absolute paths**, strictly prohibit any form of relative paths. Examples:

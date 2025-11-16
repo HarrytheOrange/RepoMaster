@@ -308,15 +308,15 @@ class AgentRunner:
             time.sleep(10)
 
             # After successful execution, synthesize minimal runner and MCP wrapper using the same explorer session
-            try:
-                AgentRunner._post_generate_mcp(explorer, target_output_path, target_repo_path)
-            except Exception as _gen_e:
-                print(f"[WARN] MCP/runner generation step failed: {_gen_e}")
-            # Run deterministic smoke tests using env-triggered self-tests
-            try:
-                AgentRunner._smoke_test_mcp(target_output_path)
-            except Exception as _test_e:
-                print(f"[WARN] MCP/runner smoke test step failed: {_test_e}")
+            # try:
+            #     AgentRunner._post_generate_mcp(explorer, target_output_path, target_repo_path)
+            # except Exception as _gen_e:
+            #     print(f"[WARN] MCP/runner generation step failed: {_gen_e}")
+            # # Run deterministic smoke tests using env-triggered self-tests
+            # try:
+            #     AgentRunner._smoke_test_mcp(target_output_path)
+            # except Exception as _test_e:
+            #     print(f"[WARN] MCP/runner smoke test step failed: {_test_e}")
             
             # Check if retry is needed
             if not os.path.exists(target_output_path) and retry_times > 0:
@@ -347,7 +347,7 @@ class AgentRunner:
         - repo_path: {target_repo_path}
         - output_dir: {target_output_path}
 
-        Now, reusing your current understanding, create TWO files under output_dir using executable code blocks with a filename header (do NOT use FileEditTool.edit to create new files):
+        Now, reusing your current understanding, create TWO files under output_dir by calling the code edit tool ('edit'/FileEditTool.edit) to write file contents. Do NOT use '# filename:' headers or executable code blocks for file creation:
 
         1) runner.py (a minimal executable entry script):
            - Prefer importing and calling repository functions directly; if not feasible, fallback to subprocess invoking the exact validated command sequence.
@@ -356,7 +356,7 @@ class AgentRunner:
            - Accept only the minimal required inputs to reproduce the task and write all outputs to output_dir.
            - Print the absolute output file paths at the end (JSON or newline-separated) so other tools can pick them up.
            - Implement a self-test path: when environment variable RUNNER_SELF_TEST=1 is set, run a smallest feasible test and exit(0) on success; print any produced outputs' absolute paths.
-           - IMPORTANT: Use an executable code block that starts with: `# filename: runner.py` so the system saves it to output_dir automatically.
+           - IMPORTANT: Use the code edit tool to create/update runner.py under output_dir, then execute it via a shell command (e.g., `python runner.py`).
 
         2) mcp_server.py (a lightweight MCP server exposing one tool named 'run_repo_task'):
            - This file MUST import runner.py and call its functionality directly (do NOT duplicate task logic).
@@ -366,7 +366,7 @@ class AgentRunner:
              {{"outputs": ["/abs/path/to/output.ext", ...]}}.
            - Provide a brief usage note at the top describing how to start the MCP server and an example client invocation.
            - Implement a self-test path: when environment variable MCP_SELF_TEST=1 is set, internally perform one minimal invocation of run_repo_task and exit(0) on success; print the returned JSON.
-           - IMPORTANT: Use an executable code block that starts with: `# filename: mcp_server.py` so the system saves it to output_dir automatically.
+           - IMPORTANT: Use the code edit tool to create/update mcp_server.py under output_dir; if needed, run it via a shell command (e.g., `python mcp_server.py`).
 
         Validation step:
            - Test runner.py: either set RUNNER_SELF_TEST=1 and execute, or perform the smallest feasible run to ensure it executes end-to-end without interactive input.

@@ -8,6 +8,7 @@ from src.services.agents.agent_client import EnhancedMessageProcessor
 from src.utils.tool_optimizer_dialog import optimize_dialogue, optimize_execution
 from src.utils.tool_streamlit import random_string
 from streamlit_extras.colored_header import colored_header
+from src.utils.audit_logger import log_event
 
 from src.core.agent_scheduler import RepoMasterAgent
 
@@ -93,6 +94,18 @@ class AgentCaller:
         )          
 
     def create_chat_completion(self, messages, user_id, chat_id, file_paths=None, active_user_memory=False):
+        try:
+            log_event(
+                "user_message",
+                payload={
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "content": messages,
+                },
+                work_dir=self.code_execution_config.get("work_dir"),
+            )
+        except Exception:
+            pass
         self.save_chat_query_and_answer(messages, "user", "User", "Researcher", "user")
 
         origin_question = messages
@@ -123,6 +136,18 @@ class AgentCaller:
             self.store_experience(user_id, origin_question)               
         
         ai_response = self.postprocess_message(ai_response)
+        try:
+            log_event(
+                "assistant_message",
+                payload={
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "content": ai_response,
+                },
+                work_dir=self.code_execution_config.get("work_dir"),
+            )
+        except Exception:
+            pass
         return ai_response
 
 def main():

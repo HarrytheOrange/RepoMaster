@@ -10,6 +10,7 @@ from autogen.cache import Cache
 
 from src.services.autogen_upgrade.base_agent import ExtendedUserProxyAgent, ExtendedAssistantAgent, check_code_block
 from src.utils.toolkits import register_toolkits
+from src.utils.audit_logger import log_event, Stopwatch
 
 from src.services.agents.deep_search_agent import AutogenDeepSearchAgent
 
@@ -396,6 +397,19 @@ Please provide comprehensive help including code examples, explanations, and pra
         initial_message = task
         
         # Start conversation
+        try:
+            log_event(
+                "agent_state",
+                payload={
+                    "agent": "RepoMasterAgent",
+                    "state": "conversation_start",
+                    "initial_message": initial_message,
+                },
+                work_dir=self.work_dir,
+            )
+        except Exception:
+            pass
+        sw = Stopwatch()
         chat_result = self.user_proxy.initiate_chat(
             self.scheduler,
             message=initial_message,
@@ -411,6 +425,7 @@ Please provide comprehensive help including code examples, explanations, and pra
         try:
             import os, json
             log_path = os.path.join(self.work_dir, "token_usage.log")
+            usage_totals = {}
             if os.path.exists(log_path):
                 totals = {}
                 with open(log_path, "r", encoding="utf-8") as f:
@@ -427,6 +442,7 @@ Please provide comprehensive help including code examples, explanations, and pra
                             totals[model]["prompt"] += pt
                             totals[model]["completion"] += ct
                             totals[model]["total"] += tt
+                            usage_totals = totals
                         except Exception:
                             continue
 
@@ -462,6 +478,34 @@ Please provide comprehensive help including code examples, explanations, and pra
                         lines.append(f"Estimated total cost≈{total_cost:.4f}")
                     footer = "\n\n---\nUsage summary:\n" + "\n".join(lines)
                     final_answer = f"{final_answer}{footer}"
+                # Emit usage summary to audit log
+                try:
+                    log_event(
+                        "agent_usage_summary",
+                        payload={
+                            "agent": "RepoMasterAgent",
+                            "usage_totals": usage_totals,
+                            "estimated_total_cost": round(total_cost, 6) if any_cost else None,
+                        },
+                        work_dir=self.work_dir,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        
+        # End conversation state log
+        try:
+            log_event(
+                "agent_state",
+                payload={
+                    "agent": "RepoMasterAgent",
+                    "state": "conversation_end",
+                    "duration_s": sw.elapsed(),
+                    "final_answer_preview": (final_answer or "")[:2000],
+                },
+                work_dir=self.work_dir,
+            )
         except Exception:
             pass
         
