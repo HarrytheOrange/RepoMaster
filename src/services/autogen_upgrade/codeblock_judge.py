@@ -13,7 +13,7 @@ def _build_system_prompt() -> str:
         "1) Judge whether each code block is runnable and whether the language label matches the code (language_ok)\n"
         "2) Identify code block intent:\n"
         "   - env_setup: System dependencies/environment preparation (such as apt-get, pip install, etc.)\n"
-        "   - direct_exec: Code to be executed directly (contains specific logic). NOTE: Python code blocks are saved via tools (e.g., WriteFileTool.write) and are not executed directly; only shell commands are executed.\n" 
+        "   - direct_exec: Code to be executed directly (contains specific logic). NOTE: Python code blocks are saved via tools (e.g., WriteFileTool.write) and are not executed directly; only shell commands are executed via RunShellTool.bash.\n" 
         "   - script_run: Run script commands (such as python xxx.py)\n"
         "   - other: Other types\n"
         "3) Extract target file target_file:\n"

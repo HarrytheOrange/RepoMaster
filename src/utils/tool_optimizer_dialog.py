@@ -2,6 +2,8 @@
 
 import json
 import ast
+import os
+from datetime import datetime
 from src.utils.agent_gpt4 import AzureGPT4Chat  # Assuming the previous code is in azure_gpt4_chat.py
 
 # Import the prompt template
@@ -9,6 +11,33 @@ from src.services.prompts.optimized_task_execution import (
     Optimized_Task_Execution_Prompt,
     Optimiz_Dialogue_History_Prompt,
 )
+
+
+def _get_text_length(data):
+    if isinstance(data, str):
+        return len(data)
+    try:
+        return len(json.dumps(data, ensure_ascii=False))
+    except Exception:
+        return len(str(data))
+
+
+def _log_compression_stats(optimiz_type, before_length, after_length):
+    try:
+        log_dir = os.path.join(os.getcwd(), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "token_usage.log")
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "type": "context_compression",
+            "mode": optimiz_type,
+            "original_chars": before_length,
+            "compressed_chars": after_length,
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def normalize_parsed_data(data):
@@ -75,6 +104,7 @@ def get_optimization(original_dialogue, optimiz_type, max_retries=5):
     Optimize the given dialogue using GPT-4 and return the optimized version.
     """
     gpt4_chat = AzureGPT4Chat(system_prompt="You are a helpful AI assistant.")
+    original_length = _get_text_length(original_dialogue)
     
     for attempt in range(max_retries):
         try:
@@ -91,6 +121,11 @@ def get_optimization(original_dialogue, optimiz_type, max_retries=5):
             # optimized_dialogue = parse_optimized_dialogue(response)
             
             if optimized_dialogue is not None:
+                _log_compression_stats(
+                    optimiz_type,
+                    original_length,
+                    _get_text_length(optimized_dialogue),
+                )
                 return optimized_dialogue
             else:
                 print(f"Attempt {attempt + 1} failed. Retrying...")

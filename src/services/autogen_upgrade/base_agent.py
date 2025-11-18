@@ -15,7 +15,6 @@ import time
 from autogen import AssistantAgent, UserProxyAgent, ConversableAgent
 from src.core.code_utils import filter_pip_output, cut_execute_result_by_token, cut_logs_by_token
 from src.utils.pip_install_error.judge_pip_error import judge_pip_package
-from src.services.autogen_upgrade.autogen_fix_execution import filter_duplicate_commands
 from src.services.autogen_upgrade.file_monitor import get_directory_files, compare_and_display_new_files
 from autogen import Agent
 from autogen.agentchat.conversable_agent import logger
@@ -62,6 +61,28 @@ def check_code_block(content):
                 return None
         
         return code_blocks if code_blocks else None
+    return None
+
+
+def _extract_file_path_from_tool_arguments(arguments):
+    """Parse autogen tool arguments and return a file path if present."""
+    if not arguments:
+        return None
+    data = None
+    if isinstance(arguments, str):
+        try:
+            data = json.loads(arguments)
+        except Exception:
+            return None
+    elif isinstance(arguments, dict):
+        data = arguments
+    else:
+        return None
+
+    for key in ("file_path", "target_file", "path", "filename"):
+        value = data.get(key)
+        if value:
+            return value
     return None
 
 class BasicConversableAgent(ConversableAgent):
@@ -136,6 +157,33 @@ class BasicConversableAgent(ConversableAgent):
                     except Exception:
                         tool_name = None
 
+            file_logging_tools = {"write", "edit"}
+            tool_file_path = None
+            if isinstance(extracted_response, dict):
+                tcalls = extracted_response.get("tool_calls") or []
+                if isinstance(tcalls, list) and tcalls:
+                    for tc in tcalls:
+                        function_data = tc.get("function") or {}
+                        fn = function_data.get("name")
+                        if fn in file_logging_tools:
+                            args = function_data.get("arguments")
+                            maybe_path = _extract_file_path_from_tool_arguments(args)
+                            if maybe_path:
+                                tool_file_path = maybe_path
+                                if tool_name is None:
+                                    tool_name = fn
+                                break
+                elif extracted_response.get("function_call"):
+                    function_data = extracted_response.get("function_call") or {}
+                    fn = function_data.get("name")
+                    if fn in file_logging_tools:
+                        args = function_data.get("arguments")
+                        maybe_path = _extract_file_path_from_tool_arguments(args)
+                        if maybe_path:
+                            tool_file_path = maybe_path
+                            if tool_name is None:
+                                tool_name = fn
+
             if usage:
                 # Prefer the agent's working directory; fallback to ./logs
                 log_dir = None
@@ -160,6 +208,8 @@ class BasicConversableAgent(ConversableAgent):
                         "total_tokens": _get(usage, "total_tokens"),
                     },
                 }
+                if tool_file_path and tool_name in file_logging_tools:
+                    entry["file_path"] = tool_file_path
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             
@@ -435,7 +485,7 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
                     
                     # # Re-execute code
                     if code_blocks:
-                        execute_result = super().execute_code_blocks(code_blocks)
+                        execute_result = self.execute_code_blocks(code_blocks)
                         args['execute_result'] = execute_result
                         return self.process_import_error(args, retry_times=retry_times+1)
                     else:
@@ -466,27 +516,34 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
         
         return execute_result
     
+    def _build_manual_execution_instructions(self, code_blocks):
+        header = (
+            "Automatic execution of code blocks has been disabled.\n"
+            "Please use WriteFileTool.write/FileEditTool.edit to save or modify files, "
+            "and RunShellTool.bash to execute commands manually.\n"
+        )
+        if not code_blocks:
+            return header + "\nNo executable code blocks were detected."
+
+        formatted_blocks = []
+        for idx, block in enumerate(code_blocks, start=1):
+            language = (getattr(block, "language", "") or "unknown").strip()
+            code = getattr(block, "code", "") or ""
+            snippet = code.strip()
+            if len(snippet) > 400:
+                snippet = snippet[:400] + "...\n[truncated]"
+            formatted_blocks.append(f"{idx}. language: {language or 'unknown'}\n{snippet}")
+
+        instructions = header + "\nDetected code blocks:\n" + "\n\n".join(formatted_blocks)
+        return instructions
+    
     def execute_code_blocks(self, code_blocks):
         """Override the code execution to handle path issues"""
         # Add project root to Python path
         self.set_env()
         
-        # print(f"Execute code block 1: {code_blocks}")
-        code_blocks, shell_cmds = filter_duplicate_commands(code_blocks)
-        for cmd in shell_cmds:
-            print(f"echo {cmd} >> {self._code_execution_config['work_dir']}/run_all_cmd.sh", flush=True)
-            os.system(f"echo {cmd} >> {self._code_execution_config['work_dir']}/run_all_cmd.sh")
-        # print(f"Execute code block 2: {code_blocks}"))
-        
-        execute_result = super().execute_code_blocks(code_blocks)
-        
-        if 0:
-            execute_result = self.process_import_error(args={"execute_result": execute_result, "code_blocks": code_blocks})
-            execute_result = execute_result['execute_result']
-        
-        exitcode, logs_all = execute_result
-        
-        return exitcode, self.clean_execute_result(logs_all)
+        instructions = self._build_manual_execution_instructions(code_blocks)
+        return 1, self.clean_execute_result(instructions)
 
     def _generate_code_execution_reply_using_executor(
         self,
@@ -592,10 +649,8 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
             except Exception:
                 pass
             
-            # found code blocks, execute code.
-            code_result = self._code_executor.execute_code_blocks(code_blocks)
-            exitcode2str = "execution succeeded" if code_result.exit_code == 0 else "execution failed"
-            return True, f"exitcode: {code_result.exit_code} ({exitcode2str})\nCode output: {code_result.output}"
+            instructions = self._build_manual_execution_instructions(code_blocks)
+            return True, instructions
 
         return False, None    
 

@@ -157,3 +157,107 @@ class WriteFileTool:
         
         except Exception as e:
             return f"Error writing file: {str(e)}"
+
+
+class RunShellTool:
+    """Tool for executing shell commands via bash."""
+    
+    DEFAULT_TIMEOUT = 1200
+    
+    @staticmethod
+    def _run_command(
+        command: str,
+        work_dir: Optional[str] = None,
+        timeout: Optional[int] = None,
+        env: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        if not command or not command.strip():
+            return {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "Empty command provided.",
+            }
+        
+        if work_dir and not os.path.isabs(work_dir):
+            raise ValueError("work_dir must be an absolute path")
+        
+        timeout = timeout or RunShellTool.DEFAULT_TIMEOUT
+        executable = None
+        if os.name != "nt":
+            bash_path = shutil.which("bash")
+            if bash_path:
+                executable = bash_path
+        
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=env,
+                executable=executable,
+            )
+            return {
+                "exit_code": completed.returncode,
+                "stdout": completed.stdout.strip(),
+                "stderr": completed.stderr.strip(),
+                "command": command,
+            }
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "exit_code": 124,
+                "stdout": exc.stdout.strip() if exc.stdout else "",
+                "stderr": (exc.stderr or "") + "\nCommand timed out.",
+                "command": command,
+            }
+        except Exception as exc:
+            return {
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": f"Command execution failed: {exc}",
+                "command": command,
+            }
+    
+    @staticmethod
+    def bash(
+        command: Annotated[str, "Shell command to execute via bash"],
+        work_dir: Annotated[Optional[str], "Absolute working directory for command execution"] = None,
+        timeout: Annotated[Optional[int], "Execution timeout in seconds (default 1200)"] = None,
+    ) -> Annotated[str, "Command execution result including exit code, stdout and stderr"]:
+        """
+        Execute a shell command using bash and return the textual output.
+        """
+        result = RunShellTool._run_command(
+            command=command,
+            work_dir=work_dir,
+            timeout=timeout,
+        )
+        
+        summary_parts = [
+            f"Command: {command.strip()}",
+            f"Workdir: {work_dir or os.getcwd()}",
+            f"Exit Code: {result['exit_code']}",
+        ]
+        if result["stdout"]:
+            summary_parts.append(f"STDOUT:\n{result['stdout']}")
+        if result["stderr"]:
+            summary_parts.append(f"STDERR:\n{result['stderr']}")
+        summary = "\n".join(summary_parts)
+        
+        try:
+            log_event(
+                "tool_shell_execute",
+                payload={
+                    "tool_name": "RunShellTool.bash",
+                    "command": command,
+                    "work_dir": work_dir,
+                    "exit_code": result["exit_code"],
+                },
+                work_dir=work_dir,
+            )
+        except Exception:
+            pass
+        
+        return summary
