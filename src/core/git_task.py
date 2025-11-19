@@ -7,6 +7,7 @@ import subprocess
 import time
 import traceback
 import yaml
+import shutil
 from src.core.agent_code_explore import CodeExplorer
 from pathlib import Path
 import concurrent.futures
@@ -64,14 +65,30 @@ class DataProcessor:
     """Data processing class for handling file copying, decompression and other operations"""
     
     @staticmethod
+    def _link_or_copy(source, destination):
+        """Create symlink on POSIX, copy on Windows"""
+        if os.path.exists(destination):
+            return
+        if os.name == 'nt':
+            if os.path.isdir(source):
+                shutil.copytree(source, destination, dirs_exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copy2(source, destination)
+        else:
+            target_is_directory = os.path.isdir(source)
+            os.symlink(source, destination, target_is_directory=target_is_directory)
+    
+    @staticmethod
     def copy_dataset(data_path, target_path):
         """Copy or link dataset to target path"""
         if not os.path.exists(target_path):
             os.makedirs(target_path, exist_ok=True)
         
         if os.path.isfile(data_path):
-            os.system(f"ln -s {data_path} {target_path}/")
-            return f"{target_path}/{Path(data_path).name}"
+            destination = f"{target_path}/{Path(data_path).name}"
+            DataProcessor._link_or_copy(data_path, destination)
+            return destination
         
         for file in os.listdir(data_path):
             source = f"{data_path}/{file}"
@@ -81,11 +98,11 @@ class DataProcessor:
                 if os.path.exists(destination):
                     print(f"Target already exists, skipping: {destination}")
                     continue
-                print(f"ln -s {source} {target_path}/")
-                os.system(f"ln -s {source} {target_path}/")
+                print(f"link/copy dir: {source} -> {destination}")
+                DataProcessor._link_or_copy(source, destination)
             else:
-                print(f"cp -a {source} {target_path}/")
-                os.system(f"cp -a {source} {target_path}/")
+                print(f"link/copy file: {source} -> {destination}")
+                DataProcessor._link_or_copy(source, destination)
         
         return 
 

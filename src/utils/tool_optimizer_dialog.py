@@ -5,6 +5,7 @@ import ast
 import os
 from datetime import datetime
 from src.utils.agent_gpt4 import AzureGPT4Chat  # Assuming the previous code is in azure_gpt4_chat.py
+from src.core.code_utils import get_code_abs_token
 
 # Import the prompt template
 from src.services.prompts.optimized_task_execution import (
@@ -22,7 +23,26 @@ def _get_text_length(data):
         return len(str(data))
 
 
-def _log_compression_stats(optimiz_type, before_length, after_length):
+def _to_text(data):
+    if isinstance(data, str):
+        return data
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return str(data)
+
+
+def _get_token_length(data):
+    text = _to_text(data)
+    if not text:
+        return 0
+    try:
+        return get_code_abs_token(text)
+    except Exception:
+        return len(text)
+
+
+def _log_compression_stats(optimiz_type, before_length, after_length, tool_response_tokens=0):
     try:
         log_dir = os.path.join(os.getcwd(), "logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -33,6 +53,7 @@ def _log_compression_stats(optimiz_type, before_length, after_length):
             "mode": optimiz_type,
             "original_chars": before_length,
             "compressed_chars": after_length,
+            "tool_response_tokens": tool_response_tokens,
         }
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -121,10 +142,12 @@ def get_optimization(original_dialogue, optimiz_type, max_retries=5):
             # optimized_dialogue = parse_optimized_dialogue(response)
             
             if optimized_dialogue is not None:
+                serialized_dialogue = _to_text(optimized_dialogue)
                 _log_compression_stats(
                     optimiz_type,
                     original_length,
                     _get_text_length(optimized_dialogue),
+                    tool_response_tokens=_get_token_length(serialized_dialogue),
                 )
                 return optimized_dialogue
             else:

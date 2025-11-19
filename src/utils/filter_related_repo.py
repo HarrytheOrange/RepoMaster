@@ -81,6 +81,7 @@ Please score each repository from the following dimensions (0 or 1):
 Additionally, please give an overall score (1-10 points), which should comprehensively consider code quality, task matching, implementation completeness and other aspects. You can judge according to your experience, but there should be certain discrimination.
 
 # Please note that if the model structure in the repository is mainly based on TensorFlow, it is considered irrelevant
+# Also avoid repositories whose primary models rely on Caffe/Caffee; prioritize newer, actively maintained frameworks.
 
 Only return JSON format: 
 [{{"repo_index": 1 or 0, "Algorithm Match": 1 or 0, "Domain Applicability": 1 or 0, "Data Processing Capability": 1 or 0, "Model Implementation Quality": 1 or 0, "Code Readability": 1 or 0, "Structure Organization": 1 or 0, "Experimental Results": 1 or 0, "Scalability": 1 or 0, "Overall Score": 1-10}}, ...]

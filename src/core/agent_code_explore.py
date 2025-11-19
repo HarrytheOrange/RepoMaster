@@ -8,12 +8,14 @@ import os
 import subprocess
 from datetime import datetime
 from textwrap import dedent
+from copy import deepcopy
 from autogen import Agent, AssistantAgent, UserProxyAgent, ConversableAgent
 from autogen.coding import DockerCommandLineCodeExecutor, LocalCommandLineCodeExecutor
 from autogen.code_utils import create_virtual_env
 from src.core.code_utils import filter_pip_output, get_code_abs_token
 from src.core.prompt import USER_EXPLORER_PROMPT, CODE_ASSISTANT_PROMPT, SYSTEM_EXPLORER_PROMPT, TRAIN_PROMPT
 from src.core.tool_code_explorer import CodeExplorerTools
+from src.core.tool_response_summarizer import ToolResponseSummarizer
 from src.services.autogen_upgrade.base_agent import ExtendedUserProxyAgent, ExtendedAssistantAgent, check_code_block
 from src.core.base_code_explorer import BaseCodeExplorer
 from src.services.agents.deep_search_agent import AutogenDeepSearchAgent
@@ -53,6 +55,8 @@ class CodeExplorer(BaseCodeExplorer):
         self.current_tool_call_count = 0
         self.token_limit = 2000  # Set token count limit
         self.limit_restart_tokens = 80000  # Set restart token count limit
+        self.context_summary_token_threshold = 20000
+        self.context_summary_keep_last = 5
         
         # self.is_cleanup_venv = False
         
@@ -205,6 +209,9 @@ class CodeExplorer(BaseCodeExplorer):
         # Register tool functions
         if self.args.get("function_call", True) and self.code_library:
             self._register_tools()
+        
+        self._attach_tool_response_summarizer()
+        self._attach_history_summary_hook()
 
     async def issue_solution_search(self, issue_description: Annotated[str, "Description of specific programming issues or errors encountered by the user"]) -> str:
         """
@@ -255,6 +262,98 @@ If no relevant solutions are found, please indicate that.
             self.explore,
             self.executor,
         )
+    
+    def _attach_tool_response_summarizer(self):
+        if not hasattr(self, "executor"):
+            return
+        if getattr(self.executor, "tool_response_summarizer", None):
+            return
+        summarizer = ToolResponseSummarizer(
+            llm_config=self.llm_config,
+            token_limit=self.token_limit,
+            work_dir=self.work_dir,
+            agent_name=self.executor.name,
+        )
+        self.tool_response_summarizer = summarizer
+        self.executor.tool_response_summarizer = summarizer
+    
+    def _attach_history_summary_hook(self):
+        if getattr(self, "_history_summary_hook_installed", False):
+            return
+        def wrap(agent):
+            if not hasattr(agent, "_process_received_message"):
+                return
+            original = agent._process_received_message
+            if getattr(original, "_history_summary_wrapped", False):
+                return
+            def wrapped(message, sender, silent):
+                result = original(message, sender, silent)
+                try:
+                    self._auto_summarize_history()
+                except Exception as exc:
+                    print(f"[CodeExplorer] auto summarize failed: {exc}", flush=True)
+                return result
+            wrapped._history_summary_wrapped = True
+            agent._process_received_message = wrapped
+        wrap(self.executor)
+        wrap(self.explore)
+        self._history_summary_hook_installed = True
+    
+    def _auto_summarize_history(self):
+        if not hasattr(self, "executor") or not hasattr(self, "explore"):
+            return
+        messages = self.executor.chat_messages.get(self.explore, [])
+        if not messages:
+            return
+        total_tokens = self._count_message_tokens(messages)
+        if total_tokens <= self.context_summary_token_threshold:
+            return
+        keep = min(self.context_summary_keep_last, len(messages))
+        if len(messages) - keep <= 2:
+            return
+        head_messages = messages[:-keep] if keep else messages[:]
+        tail_messages = deepcopy(messages[-keep:]) if keep else []
+        summary_payload = self.summary_chat_history(getattr(self, "task", ""), deepcopy(head_messages))
+        summarized_head = json.loads(summary_payload)
+        new_history = summarized_head + tail_messages
+        after_tokens = self._count_message_tokens(new_history)
+        if after_tokens >= total_tokens:
+            return
+        self._set_conversation_history(new_history)
+        self._log_history_compression(total_tokens, after_tokens)
+    
+    def _count_message_tokens(self, messages):
+        total = 0
+        for msg in messages:
+            content = msg.get("content")
+            if content:
+                total += get_code_abs_token(str(content))
+        return total
+    
+    def _set_conversation_history(self, messages):
+        self.executor.chat_messages[self.explore] = deepcopy(messages)
+        self.explore.chat_messages[self.executor] = deepcopy(messages)
+        self.executor._oai_messages[self.explore] = deepcopy(messages)
+        self.explore._oai_messages[self.executor] = deepcopy(messages)
+    
+    def _log_history_compression(self, before_tokens, after_tokens):
+        log_dir = self.work_dir or os.path.join(os.getcwd(), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "token_usage.log")
+        entry = {
+            "ts": datetime.now().isoformat(),
+            "agent": getattr(self.explore, "name", "Code_Explorer"),
+            "model": "history_summarizer",
+            "tool": "summary_chat_history_auto",
+            "compression": {
+                "before_tokens": before_tokens,
+                "after_tokens": after_tokens,
+                "keep_last": self.context_summary_keep_last,
+                "threshold": self.context_summary_token_threshold,
+            },
+        }
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     
     async def analyze_code(self, task: str, max_turns: int = 40) -> str:
         """

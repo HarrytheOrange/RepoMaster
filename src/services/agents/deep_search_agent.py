@@ -31,6 +31,16 @@ from src.services.prompts.deepsearch_prompt import EXECUTOR_SYSTEM_PROMPT, DEEP_
 from src.utils.tool_optimizer_dialog import optimize_execution, optimize_dialogue
 
 from configs.oai_config import get_llm_config
+from src.core.code_utils import get_code_abs_token
+
+
+def _safe_token_len(text: Optional[str]) -> int:
+    if not text:
+        return 0
+    try:
+        return get_code_abs_token(text)
+    except Exception:
+        return len(text or "")
 
 
 class DeepSearchExecutor(ExtendedUserProxyAgent):
@@ -262,6 +272,8 @@ class AutogenDeepSearchAgent:
         
         # Directly use client's create method without passing additional API parameters
         response = client.create(messages=messages_list)
+        summary = response.choices[0].message.content
+        summary_tokens = _safe_token_len(summary)
         # Persist token usage for this summarization call
         try:
             usage = getattr(response, "usage", None)
@@ -287,6 +299,7 @@ class AutogenDeepSearchAgent:
                     "agent": "deepsearch_summary",
                     "model": model,
                     "tool": None,
+                    "tool_response_tokens": summary_tokens,
                     "usage": {
                         "prompt_tokens": _get(usage, "prompt_tokens"),
                         "completion_tokens": _get(usage, "completion_tokens"),
@@ -298,8 +311,6 @@ class AutogenDeepSearchAgent:
         except Exception:
             pass
             
-        summary = response.choices[0].message.content
-        
         return summary
     
     async def deep_search(self, query: str) -> str:

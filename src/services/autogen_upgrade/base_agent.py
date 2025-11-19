@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Any, Tuple, Annotated, Literal
 import time
 from autogen import AssistantAgent, UserProxyAgent, ConversableAgent
-from src.core.code_utils import filter_pip_output, cut_execute_result_by_token, cut_logs_by_token
+from src.core.code_utils import (
+    filter_pip_output,
+    cut_execute_result_by_token,
+    cut_logs_by_token,
+    get_code_abs_token,
+)
 from src.utils.pip_install_error.judge_pip_error import judge_pip_package
 from src.services.autogen_upgrade.file_monitor import get_directory_files, compare_and_display_new_files
 from autogen import Agent
@@ -85,6 +90,23 @@ def _extract_file_path_from_tool_arguments(arguments):
             return value
     return None
 
+
+def _safe_token_len(content):
+    if content is None:
+        return 0
+    if not isinstance(content, str):
+        try:
+            content = json.dumps(content, ensure_ascii=False)
+        except Exception:
+            content = str(content)
+    try:
+        return get_code_abs_token(content)
+    except Exception:
+        try:
+            return len(content)
+        except Exception:
+            return 0
+
 class BasicConversableAgent(ConversableAgent):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -116,6 +138,18 @@ class BasicConversableAgent(ConversableAgent):
         if extracted_response is None:
             warnings.warn(f"Extracted_response from {response} is None.", UserWarning)
             return None
+        
+        response_preview = extracted_response
+        if isinstance(extracted_response, dict):
+            response_preview = extracted_response.get("content")
+            if response_preview is None:
+                try:
+                    response_preview = json.dumps(extracted_response, ensure_ascii=False)
+                except Exception:
+                    response_preview = str(extracted_response)
+        elif not isinstance(extracted_response, str):
+            response_preview = str(extracted_response)
+        tool_response_tokens = _safe_token_len(response_preview)
         
         # ensure function and tool calls will be accepted when sent back to the LLM
         if not isinstance(extracted_response, str) and hasattr(extracted_response, "model_dump"):
@@ -202,6 +236,7 @@ class BasicConversableAgent(ConversableAgent):
                     "agent": getattr(self, "name", ""),
                     "model": model,
                     "tool": tool_name,  # one LLM call corresponds to 0 or 1 tool suggestions; we record first if any
+                "tool_response_tokens": tool_response_tokens,
                     "usage": {
                         "prompt_tokens": _get(usage, "prompt_tokens"),
                         "completion_tokens": _get(usage, "completion_tokens"),
@@ -216,9 +251,6 @@ class BasicConversableAgent(ConversableAgent):
             # Emit structured audit record for this LLM interaction
             try:
                 # Extract compact response preview
-                response_preview = extracted_response
-                if isinstance(extracted_response, dict):
-                    response_preview = extracted_response.get("content") or json.dumps(extracted_response)
                 tool_calls_list = []
                 if isinstance(extracted_response, dict):
                     if extracted_response.get("tool_calls"):
@@ -358,8 +390,21 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
         sw = Stopwatch()
         execute_result = await super().a_execute_function(func_call, call_id, verbose)
         is_exec_success, result_dict = execute_result
-        if isinstance(result_dict, dict) and 'content' in result_dict and isinstance(result_dict['content'], str):
-            result_dict['content'] = cut_logs_by_token(result_dict['content'], max_token=8000)
+
+        if isinstance(result_dict, dict):
+            content = result_dict.get('content')
+            if isinstance(content, str):
+                summarizer = getattr(self, "tool_response_summarizer", None)
+                if summarizer:
+                    summarized = summarizer.maybe_summarize(
+                        tool_name=(func_call or {}).get("name"),
+                        tool_arguments=(func_call or {}).get("arguments"),
+                        tool_response=content,
+                    )
+                    if summarized:
+                        content = summarized
+                        result_dict['content'] = content
+                result_dict['content'] = cut_logs_by_token(result_dict['content'], max_token=8000)
         try:
             # Structured audit for tool execution
             tool_name = (func_call or {}).get("name")
@@ -621,6 +666,8 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
                     ),
                     flush=True,
                 )
+            instructions = self._build_manual_execution_instructions(code_blocks)
+            instructions_tokens = _safe_token_len(instructions)
             # Log code execution metadata to token_usage.log (without code content)
             try:
                 log_dir = None
@@ -638,6 +685,7 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
                     "tool": (languages[0] if len(languages) == 1 else ",".join([str(l) for l in languages])),
                     "languages": languages,
                     "num_code_blocks": num_code_blocks,
+                    "tool_response_tokens": instructions_tokens,
                     "usage": {
                         "prompt_tokens": 0,
                         "completion_tokens": 0,
@@ -649,7 +697,6 @@ class ExtendedUserProxyAgent(BasicConversableAgent, TrackableUserProxyAgent):
             except Exception:
                 pass
             
-            instructions = self._build_manual_execution_instructions(code_blocks)
             return True, instructions
 
         return False, None    
